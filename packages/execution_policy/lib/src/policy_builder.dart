@@ -49,11 +49,9 @@ class PolicyBuilder<T> {
   PolicyBuilder<T> retry(
     RetryOptions options, {
     bool Function(Object error)? retryIf,
-    FutureOr<void> Function(Object error, StackTrace? stack, int attempt)?
-        onError,
+    FutureOr<void> Function(Object error, StackTrace? stack, int attempt)? onError,
   }) {
-    _policies.add(
-        RetryPolicy<T>(options: options, retryIf: retryIf, onError: onError));
+    _policies.add(RetryPolicy<T>(options: options, retryIf: retryIf, onError: onError));
     return this;
   }
 
@@ -88,8 +86,7 @@ class PolicyBuilder<T> {
   /// Policies are sorted by `order` and wrapped so that the outermost policy
   /// runs first and the innermost last.
   Future<T> execute(FutureFunction<T> action) async {
-    final ordered = List<Policy<T>>.from(_policies)
-      ..sort((a, b) => a.order.compareTo(b.order));
+    final ordered = List<Policy<T>>.from(_policies)..sort((a, b) => a.order.compareTo(b.order));
     FutureFunction<T> current = action;
     for (final policy in ordered.reversed) {
       final prev = current;
@@ -106,13 +103,25 @@ class PolicyBuilder<T> {
     FutureFunction<T> action,
     void Function(String message) logger,
   ) {
-    final ordered = List<Policy<T>>.from(_policies)
-      ..sort((a, b) => a.order.compareTo(b.order));
+    final ordered = List<Policy<T>>.from(_policies)..sort((a, b) => a.order.compareTo(b.order));
     FutureFunction<T> current = action;
     for (final policy in ordered.reversed) {
       final prev = current;
       current = () => PolicyDebugger<T>(policy, logger).execute(prev);
     }
     return current();
+  }
+
+  /// Clears all added policies, allowing reuse of the builder.
+  PolicyBuilder<T> reset() {
+    _policies.clear();
+    return this;
+  }
+
+  /// Returns a new PolicyBuilder with the same policies.
+  PolicyBuilder<T> copy() {
+    final newBuilder = PolicyBuilder<T>();
+    newBuilder._policies.addAll(_policies);
+    return newBuilder;
   }
 }
