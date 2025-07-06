@@ -1,0 +1,28 @@
+# Exclude Dart tool directories
+.dart_tool/
+**/.dart_tool/
+
+# Pub build artifacts and locks
+.packages
+pubspec.lock
+.pub/
+**/.pub/
+
+# Monorepo sub-package artifacts
+packages/**/.dart_tool/
+packages/**/.pub/
+packages/**/.packages
+packages/**/pubspec.lock
+
+# IDE settings
+.idea/
+.vscode/
+*.iml
+
+# Build output
+build/
+dist/
+
+# Optional: tests and examples (omit if you DO want to publish them)
+test/
+example/
