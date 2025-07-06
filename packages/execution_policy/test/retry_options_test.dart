@@ -42,7 +42,6 @@ void main() {
 
     test('exponentialJitter preset is within ±jitterFactor', () {
       final opts = RetryOptions.exponentialJitter; // jitterFactor=0.25
-      final rnd = Random(123); // seed for reproducibility
       for (var i = 1; i <= 5; i++) {
         final baseMs = 200 * pow(2, i - 1).toInt();
         // run multiple times to sample random jitter

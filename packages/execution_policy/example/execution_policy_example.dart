@@ -13,7 +13,7 @@ Future<void> main() async {
       .circuitBreaker(failureThreshold: 3, resetTimeout: Duration(seconds: 10))
       .fallback(() async => 'default');
 
-  // Production execution
+  // Default execution
   try {
     final result = await builder.execute(() async {
       print('Performing operation...');

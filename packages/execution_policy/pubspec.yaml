@@ -1,6 +1,6 @@
 name: execution_policy
-description: Inspired by C# polly library
-version: 0.1.0
+description: A Dart resilience and transient-fault-handling library inspired by C# Polly.
+version: 0.1.1
 repository: https://github.com/anurag-bharati/dart-packages
 homepage: https://github.com/anurag-bharati/dart-packages/tree/main/
 resolution: workspace
