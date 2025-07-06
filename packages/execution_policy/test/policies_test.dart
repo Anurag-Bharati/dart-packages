@@ -83,7 +83,9 @@ void main() {
       );
 
       // compute the minimum possible back-off (50ms × (1 – 0.5) = 25ms)
-      final minDelay = (policy.options.baseDelay.inMilliseconds * (1 - policy.options.jitterFactor)).round();
+      final minDelay = (policy.options.baseDelay.inMilliseconds *
+              (1 - policy.options.jitterFactor))
+          .round();
 
       final sw = Stopwatch()..start();
       await expectLater(
@@ -99,7 +101,8 @@ void main() {
       expect(
         sw.elapsedMilliseconds,
         greaterThanOrEqualTo(minDelay),
-        reason: 'elapsed ${sw.elapsedMilliseconds}ms should be ≥ minDelay ${minDelay}ms',
+        reason:
+            'elapsed ${sw.elapsedMilliseconds}ms should be ≥ minDelay ${minDelay}ms',
       );
       expect(attempts, 2);
     });
@@ -185,7 +188,8 @@ void main() {
       // Circuit now open: immediate reject as StateError('Circuit is open')
       await expectLater(
         policy.execute(() async => 1),
-        throwsA(predicate((e) => e is StateError && e.toString().contains('Circuit is open'))),
+        throwsA(predicate((e) =>
+            e is StateError && e.toString().contains('Circuit is open'))),
       );
     });
 

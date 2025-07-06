@@ -54,7 +54,8 @@ void main() {
           expect(
             actual,
             inInclusiveRange(minMs, maxMs),
-            reason: 'jittered: attempt $i → $actual ms (expected between $minMs and $maxMs)',
+            reason:
+                'jittered: attempt $i → $actual ms (expected between $minMs and $maxMs)',
           );
         }
       }

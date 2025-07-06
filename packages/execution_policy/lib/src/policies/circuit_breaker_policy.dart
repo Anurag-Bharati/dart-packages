@@ -30,7 +30,8 @@ class CircuitBreakerPolicy<T> implements Policy<T> {
   bool get _isOpen {
     if (_state != CircuitState.open) return false;
     // If enough time has passed, move to half-open
-    if (_lastFailureTime != null && DateTime.now().difference(_lastFailureTime!) >= resetTimeout) {
+    if (_lastFailureTime != null &&
+        DateTime.now().difference(_lastFailureTime!) >= resetTimeout) {
       _state = CircuitState.halfOpen;
       return false;
     }

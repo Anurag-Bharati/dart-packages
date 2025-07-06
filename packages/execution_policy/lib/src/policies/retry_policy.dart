@@ -115,9 +115,11 @@ class RetryPolicy<T> implements Policy<T> {
 
   final RetryOptions options;
   final bool Function(Object error)? retryIf;
-  final FutureOr<void> Function(Object error, StackTrace? stack, int attempt)? onError;
+  final FutureOr<void> Function(Object error, StackTrace? stack, int attempt)?
+      onError;
 
-  RetryPolicy({this.options = const RetryOptions(), this.retryIf, this.onError});
+  RetryPolicy(
+      {this.options = const RetryOptions(), this.retryIf, this.onError});
 
   @override
   Future<T> execute(FutureFunction<T> action) async {
@@ -126,7 +128,8 @@ class RetryPolicy<T> implements Policy<T> {
         return await action();
       } catch (error, stack) {
         onError?.call(error, stack, attempt);
-        final canRetry = attempt < options.maxAttempts && (retryIf?.call(error) ?? true);
+        final canRetry =
+            attempt < options.maxAttempts && (retryIf?.call(error) ?? true);
         if (!canRetry) rethrow;
         await Future.delayed(options.delayFor(attempt));
       }

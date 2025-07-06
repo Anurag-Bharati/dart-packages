@@ -13,7 +13,8 @@ void main() {
 
     test('retries and returns when action eventually succeeds', () async {
       var count = 0;
-      final builder = PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 3, baseDelay: Duration.zero));
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 3, baseDelay: Duration.zero));
       final result = await builder.execute(() async {
         count++;
         if (count < 3) throw Exception('fail');
@@ -24,8 +25,9 @@ void main() {
     });
 
     test('returns fallback when all retries fail', () async {
-      final builder =
-          PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero)).fallback(() async => 99);
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero))
+          .fallback(() async => 99);
       final result = await builder.execute(() async {
         throw Exception('always fail');
       });
@@ -33,7 +35,8 @@ void main() {
     });
 
     test('throws when no fallback and all fail', () async {
-      final builder = PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
       await expectLater(
         builder.execute(() async => throw Exception('fail')),
         throwsA(isA<Exception>()),
@@ -74,11 +77,14 @@ void main() {
       expect(result, 'FB');
 
       // We expect exactly one "Starting" and one "✓ Succeeded" entry for FallbackPolicy:
-      final startLogs = logs.where((m) => m.contains('FallbackPolicy') && m.contains('→ Starting'));
-      final successLogs = logs.where((m) => m.contains('FallbackPolicy') && m.contains('✓ Succeeded'));
+      final startLogs = logs.where(
+          (m) => m.contains('FallbackPolicy') && m.contains('→ Starting'));
+      final successLogs = logs.where(
+          (m) => m.contains('FallbackPolicy') && m.contains('✓ Succeeded'));
 
       expect(startLogs.length, 1, reason: 'FallbackPolicy should start once');
-      expect(successLogs.length, 1, reason: 'FallbackPolicy should succeed once');
+      expect(successLogs.length, 1,
+          reason: 'FallbackPolicy should succeed once');
     });
   });
 }
