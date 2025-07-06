@@ -1,6 +1,6 @@
 import 'package:execution_policy/src/interface.dart';
 
-/// A generic debugger that can wrap *any* Policy<T> and
+/// A generic debugger that can wrap *any* Policy<\T> and
 /// emit start/done/failure logs with timings.
 class PolicyDebugger<T> implements Policy<T> {
   @override

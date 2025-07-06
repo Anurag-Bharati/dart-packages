@@ -19,6 +19,9 @@ class CircuitBreakerPolicy<T> implements Policy<T> {
   CircuitState _state = CircuitState.closed;
   DateTime? _lastFailureTime;
 
+  /// Creates a [CircuitBreakerPolicy].
+  ///
+  /// [failureThreshold] must be ≥1; [resetTimeout] must be non-negative.
   CircuitBreakerPolicy({
     this.failureThreshold = 3,
     this.resetTimeout = const Duration(seconds: 60),
