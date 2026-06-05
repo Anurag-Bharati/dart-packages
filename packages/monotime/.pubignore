@@ -1,0 +1,15 @@
+# Exclude Dart/Flutter tool directories
+.dart_tool/
+.packages
+.pub/
+pubspec.lock
+
+# Build outputs
+build/
+android/build/
+ios/Pods/
+
+# IDE files
+.idea/
+.vscode/
+*.iml

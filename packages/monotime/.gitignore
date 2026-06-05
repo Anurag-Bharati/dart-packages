@@ -1,0 +1,24 @@
+# Dart/Flutter tool directories
+.dart_tool/
+.packages
+.pub/
+build/
+
+# Xcode-specific files
+.idea/
+.vscode/
+*.iml
+ios/.shh/
+ios/Pods/
+ios/Runner/
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+# Android-specific files
+android/local.properties
+android/gen/
+android/gradlew
+android/gradlew.bat
+android/build/
+android/.gradle/

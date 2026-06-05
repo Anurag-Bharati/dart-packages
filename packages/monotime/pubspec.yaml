@@ -1,0 +1,45 @@
+name: monotime
+description: >
+  Tamper-resistant network time for Flutter. Anchors NTP + HTTPS-authenticated
+  consensus to the hardware monotonic clock. No Rust, no NTS-KE complexity —
+  just reliable, manipulation-proof time for mobile apps.
+version: 0.1.0
+homepage: https://github.com/Anurag-Bharati/dart-packages/tree/main/packages/monotime
+repository: https://github.com/Anurag-Bharati/dart-packages
+issue_tracker: https://github.com/Anurag-Bharati/dart-packages/issues
+resolution: workspace
+
+
+topics:
+  - time
+  - ntp
+  - security
+  - anti-fraud
+  - tamper-proof
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ntp: ^2.0.0
+  http: ^1.3.0
+  shared_preferences: ^2.5.5
+  meta: ^1.18.0
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.monotime
+        pluginClass: MonotimePlugin
+      ios:
+        pluginClass: MonotimePlugin
