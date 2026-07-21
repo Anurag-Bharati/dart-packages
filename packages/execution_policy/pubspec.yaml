@@ -1,9 +1,16 @@
 name: execution_policy
-description: A Dart resilience and transient-fault-handling library inspired by C# Polly.
-version: 0.2.0
+description: A Dart resilience and transient-fault-handling library (retry, backoff, timeout, circuit breaker, fallback) inspired by C# Polly.
+version: 0.3.0
 repository: https://github.com/anurag-bharati/dart-packages
-homepage: https://github.com/anurag-bharati/dart-packages/tree/main/
+homepage: https://github.com/anurag-bharati/dart-packages/tree/main/packages/execution_policy
+issue_tracker: https://github.com/anurag-bharati/dart-packages/issues
 resolution: workspace
+topics:
+  - resilience
+  - retry
+  - circuit-breaker
+  - backoff
+  - fault-handling
 environment:
   sdk: ^3.6.0
 

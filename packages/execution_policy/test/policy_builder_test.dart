@@ -13,7 +13,8 @@ void main() {
 
     test('retries and returns when action eventually succeeds', () async {
       var count = 0;
-      final builder = PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 3, baseDelay: Duration.zero));
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 3, baseDelay: Duration.zero));
       final result = await builder.execute(() async {
         count++;
         if (count < 3) throw Exception('fail');
@@ -24,8 +25,9 @@ void main() {
     });
 
     test('returns fallback when all retries fail', () async {
-      final builder =
-          PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero)).fallback(() async => 99);
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero))
+          .fallback((_) async => 99);
       final result = await builder.execute(() async {
         throw Exception('always fail');
       });
@@ -33,11 +35,32 @@ void main() {
     });
 
     test('throws when no fallback and all fail', () async {
-      final builder = PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
       await expectLater(
         builder.execute(() async => throw Exception('fail')),
         throwsA(isA<Exception>()),
       );
+    });
+
+    test('fallback receives the triggering error', () async {
+      Object? seen;
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 1, baseDelay: Duration.zero))
+          .fallback((e) async {
+        seen = e;
+        return 0;
+      });
+      await builder.execute(() async => throw Exception('boom'));
+      expect(seen, isA<Exception>());
+    });
+  });
+
+  group('PolicyBuilder guards', () {
+    test('rejects a second policy of the same type', () {
+      final builder = PolicyBuilder<int>().fallback((_) async => 1);
+      expect(
+          () => builder.fallback((_) async => 2), throwsA(isA<StateError>()));
     });
   });
 
@@ -64,7 +87,7 @@ void main() {
       final builder = PolicyBuilder<String>()
           .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero))
           .timeout(Duration(milliseconds: 10))
-          .fallback(() async => 'FB');
+          .fallback((_) async => 'FB');
 
       final result = await builder.debugExecute(
         () async => throw Exception('x'),
@@ -73,14 +96,17 @@ void main() {
 
       expect(result, 'FB');
 
-      // We expect exactly one "Starting" and one "✓ Succeeded" entry for FallbackPolicy:
-      final startLogs = logs.where((m) => m.contains('FallbackPolicy') && m.contains('→ Starting'));
-      final successLogs = logs.where((m) => m.contains('FallbackPolicy') && m.contains('✓ Succeeded'));
+      final startLogs = logs.where(
+          (m) => m.contains('FallbackPolicy') && m.contains('→ Starting'));
+      final successLogs = logs.where(
+          (m) => m.contains('FallbackPolicy') && m.contains('✓ Succeeded'));
 
       expect(startLogs.length, 1, reason: 'FallbackPolicy should start once');
-      expect(successLogs.length, 1, reason: 'FallbackPolicy should succeed once');
+      expect(successLogs.length, 1,
+          reason: 'FallbackPolicy should succeed once');
     });
   });
+
   group('PolicyBuilder.reset', () {
     test('clears previously added policies', () async {
       final builder = PolicyBuilder<int>()
@@ -88,9 +114,7 @@ void main() {
           .timeout(Duration(milliseconds: 50));
 
       builder.reset();
-
-      // This action would fail without a fallback, which we now add after reset
-      builder.fallback(() async => 123);
+      builder.fallback((_) async => 123);
 
       final result = await builder.execute(() async {
         throw Exception('fail');
@@ -99,13 +123,15 @@ void main() {
       expect(result, 123);
     });
 
-    test('can reuse builder after reset with different configuration', () async {
-      final builder = PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
+    test('can reuse builder after reset with different configuration',
+        () async {
+      final builder = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero));
 
       final firstResult = await builder.execute(() async => 1);
       expect(firstResult, 1);
 
-      builder.reset().fallback(() async => 9);
+      builder.reset().fallback((_) async => 9);
       final secondResult = await builder.execute(() async => throw Exception());
 
       expect(secondResult, 9);
@@ -114,8 +140,9 @@ void main() {
 
   group('PolicyBuilder.copy', () {
     test('creates a new builder with identical policy configuration', () async {
-      final original =
-          PolicyBuilder<int>().retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero)).fallback(() async => 88);
+      final original = PolicyBuilder<int>()
+          .retry(RetryOptions(maxAttempts: 2, baseDelay: Duration.zero))
+          .fallback((_) async => 88);
 
       final copied = original.copy();
 
@@ -123,16 +150,29 @@ void main() {
       expect(result, 88);
     });
 
-    test('modifying copy does not affect original', () async {
-      final original = PolicyBuilder<int>().fallback(() async => 1);
+    test('resetting a copy does not affect the original', () async {
+      final original = PolicyBuilder<int>().fallback((_) async => 1);
+      final copied = original.copy()
+        ..reset()
+        ..fallback((_) async => 2);
 
-      final copied = original.copy()..fallback(() async => 2); // Add another fallback
+      expect(await original.execute(() async => throw Exception()), 1);
+      expect(await copied.execute(() async => throw Exception()), 2);
+    });
 
-      final originalResult = await original.execute(() async => throw Exception());
-      final copiedResult = await copied.execute(() async => throw Exception());
+    test('a copy SHARES the stateful circuit breaker instance', () async {
+      final original = PolicyBuilder<int>().circuitBreaker(
+        failureThreshold: 1,
+        resetTimeout: const Duration(seconds: 10),
+      );
+      final copied = original.copy();
 
-      expect(originalResult, 1);
-      expect(copiedResult, 2);
+      // Trip the breaker via the original...
+      await expectLater(original.execute(() async => throw Exception()),
+          throwsA(isA<Exception>()));
+      // ...the copy sees the same open circuit.
+      await expectLater(
+          copied.execute(() async => 1), throwsA(isA<CircuitOpenException>()));
     });
   });
 }

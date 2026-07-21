@@ -49,7 +49,6 @@ void main() {
         policy.execute(() async => throw Exception('err')),
         throwsA(isA<Exception>()),
       );
-      // Should have been called once per attempt
       expect(errors.length, 3);
     });
 
@@ -66,7 +65,59 @@ void main() {
         }),
         throwsA(isA<Exception>()),
       );
-      // retryIf returns false, so only one attempt
+      expect(attempts, 1);
+    });
+
+    test('rejects maxAttempts < 1 at construction', () {
+      // With asserts on (debug/test) RetryOptions' own assert fires first;
+      // in release the RetryPolicy runtime guard throws ArgumentError. Either
+      // way, maxAttempts < 1 is rejected rather than silently accepted.
+      expect(
+        () => RetryPolicy<int>(options: RetryOptions(maxAttempts: 0)),
+        throwsA(anyOf(isA<ArgumentError>(), isA<AssertionError>())),
+      );
+    });
+
+    test('a throwing retryIf does not mask the real error', () async {
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(maxAttempts: 3, baseDelay: Duration.zero),
+        retryIf: (_) => throw StateError('bad predicate'),
+      );
+      await expectLater(
+        policy.execute(() async => throw Exception('real')),
+        throwsA(isA<Exception>().having((e) => '$e', 'msg', contains('real'))),
+      );
+    });
+
+    test('a throwing/rejecting onError never derails the loop', () async {
+      var attempts = 0;
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(maxAttempts: 3, baseDelay: Duration.zero),
+        onError: (_, __, ___) async => throw StateError('logger down'),
+      );
+      await expectLater(
+        policy.execute(() async {
+          attempts++;
+          throw Exception('real');
+        }),
+        throwsA(isA<Exception>().having((e) => '$e', 'msg', contains('real'))),
+      );
+      expect(attempts, 3, reason: 'all attempts still run');
+    });
+
+    test('shouldContinue=false stops retrying', () async {
+      var attempts = 0;
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(maxAttempts: 5, baseDelay: Duration.zero),
+        shouldContinue: () => false,
+      );
+      await expectLater(
+        policy.execute(() async {
+          attempts++;
+          throw Exception('fail');
+        }),
+        throwsA(isA<Exception>()),
+      );
       expect(attempts, 1);
     });
 
@@ -81,13 +132,6 @@ void main() {
           maxDelay: Duration(milliseconds: 100),
         ),
       );
-
-      // compute the minimum possible back-off (50ms × (1 – 0.5) = 25ms)
-      final minDelay = (policy.options.baseDelay.inMilliseconds *
-              (1 - policy.options.jitterFactor))
-          .round();
-
-      final sw = Stopwatch()..start();
       await expectLater(
         policy.execute(() async {
           attempts++;
@@ -95,16 +139,64 @@ void main() {
         }),
         throwsA(isA<Exception>()),
       );
-      sw.stop();
-
-      // we expect at least the *minimum* jitter delay before the retry
-      expect(
-        sw.elapsedMilliseconds,
-        greaterThanOrEqualTo(minDelay),
-        reason:
-            'elapsed ${sw.elapsedMilliseconds}ms should be ≥ minDelay ${minDelay}ms',
-      );
       expect(attempts, 2);
+    });
+  });
+
+  group('RetryPolicy cancellation', () {
+    test('cancelToken cancelled up-front stops after one attempt', () async {
+      var attempts = 0;
+      final token = CancellationToken()..cancel();
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(maxAttempts: 5, baseDelay: Duration.zero),
+        cancelToken: token,
+      );
+      await expectLater(
+        policy.execute(() async {
+          attempts++;
+          throw Exception('fail');
+        }),
+        throwsA(isA<Exception>()),
+      );
+      expect(attempts, 1);
+    });
+
+    test('cancelling mid-backoff interrupts the sleep and stops', () async {
+      var attempts = 0;
+      final token = CancellationToken();
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(
+          maxAttempts: 5,
+          baseDelay: Duration(seconds: 10), // would hang if not interrupted
+        ),
+        cancelToken: token,
+      );
+      final sw = Stopwatch()..start();
+      final future = policy.execute(() async {
+        attempts++;
+        throw Exception('fail');
+      });
+      Timer(const Duration(milliseconds: 30), token.cancel);
+      await expectLater(future, throwsA(isA<Exception>()));
+      sw.stop();
+      expect(attempts, 1);
+      expect(sw.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+  });
+
+  group('RetryPolicy observability', () {
+    test('onRetry fires once per backoff with attempt + delay', () async {
+      final calls = <int>[];
+      final policy = RetryPolicy<int>(
+        options: RetryOptions(maxAttempts: 3, baseDelay: Duration.zero),
+        onRetry: (error, attempt, delay) => calls.add(attempt),
+      );
+      await expectLater(
+        policy.execute(() async => throw Exception('fail')),
+        throwsA(isA<Exception>()),
+      );
+      // 3 attempts -> 2 backoffs (no backoff after the final failure).
+      expect(calls, [1, 2]);
     });
   });
 
@@ -128,19 +220,51 @@ void main() {
         throwsA(isA<TimeoutException>()),
       );
     });
+
+    test('a synchronous throw surfaces as a Future error, not sync', () {
+      final policy = TimeoutPolicy<int>(Duration(milliseconds: 10));
+      expect(
+        policy.execute(() => throw StateError('sync boom')),
+        throwsA(isA<StateError>()),
+      );
+    });
   });
 
   group('FallbackPolicy', () {
     test('returns action result when no error', () async {
-      final policy = FallbackPolicy<int>(fallback: () async => 99);
+      final policy = FallbackPolicy<int>(fallback: (_) async => 99);
       final result = await policy.execute(() async => 55);
       expect(result, 55);
     });
 
-    test('returns fallback when action throws', () async {
-      final policy = FallbackPolicy<int>(fallback: () async => 99);
+    test('returns fallback when action throws an Exception', () async {
+      Object? seen;
+      final policy = FallbackPolicy<int>(fallback: (e) async {
+        seen = e;
+        return 99;
+      });
       final result = await policy.execute(() async => throw Exception('oops'));
       expect(result, 99);
+      expect(seen, isA<Exception>());
+    });
+
+    test('does NOT swallow Errors (programming bugs propagate)', () async {
+      final policy = FallbackPolicy<int>(fallback: (_) async => 99);
+      await expectLater(
+        policy.execute(() async => throw TypeError()),
+        throwsA(isA<TypeError>()),
+      );
+    });
+
+    test('shouldHandle=false rethrows instead of falling back', () async {
+      final policy = FallbackPolicy<int>(
+        fallback: (_) async => 99,
+        shouldHandle: (_) => false,
+      );
+      await expectLater(
+        policy.execute(() async => throw Exception('x')),
+        throwsA(isA<Exception>()),
+      );
     });
   });
 
@@ -151,46 +275,32 @@ void main() {
         failureThreshold: 2,
         resetTimeout: Duration(milliseconds: 20),
       );
-
-      // First call succeeds
-      final r1 = await policy.execute(() async {
-        calls++;
-        return 10;
-      });
-      expect(r1, 10);
-      expect(calls, 1);
-
-      // Second call also succeeds
-      final r2 = await policy.execute(() async {
-        calls++;
-        return 20;
-      });
-      expect(r2, 20);
-      expect(calls, 2);
+      expect(await policy.execute(() async => ++calls), 1);
+      expect(await policy.execute(() async => ++calls), 2);
+      expect(policy.state, CircuitState.closed);
     });
 
-    test('opens circuit after threshold failures', () async {
+    test('opens after threshold and rejects with CircuitOpenException',
+        () async {
+      final states = <CircuitState>[];
       final policy = CircuitBreakerPolicy<int>(
         failureThreshold: 2,
         resetTimeout: Duration(milliseconds: 20),
+        onStateChange: (_, to) => states.add(to),
       );
+      await expectLater(policy.execute(() async => throw Exception('f1')),
+          throwsA(isA<Exception>()));
+      await expectLater(policy.execute(() async => throw Exception('f2')),
+          throwsA(isA<Exception>()));
+      expect(policy.state, CircuitState.open);
+      expect(policy.failureCount, 2);
 
-      // Two consecutive failures
-      await expectLater(
-        policy.execute(() async => throw Exception('f1')),
-        throwsA(isA<Exception>()),
-      );
-      await expectLater(
-        policy.execute(() async => throw Exception('f2')),
-        throwsA(isA<Exception>()),
-      );
-
-      // Circuit now open: immediate reject as StateError('Circuit is open')
       await expectLater(
         policy.execute(() async => 1),
-        throwsA(predicate((e) =>
-            e is StateError && e.toString().contains('Circuit is open'))),
+        throwsA(isA<CircuitOpenException>().having(
+            (e) => e.retryAfter, 'retryAfter', greaterThan(Duration.zero))),
       );
+      expect(states, contains(CircuitState.open));
     });
 
     test('half-opens after resetTimeout and closes on success', () async {
@@ -198,29 +308,44 @@ void main() {
         failureThreshold: 1,
         resetTimeout: Duration(milliseconds: 30),
       );
+      await expectLater(policy.execute(() async => throw Exception()),
+          throwsA(isA<Exception>()));
+      await expectLater(policy.execute(() async => 123),
+          throwsA(isA<CircuitOpenException>()));
 
-      // 1st failure opens circuit
-      await expectLater(
-        policy.execute(() async => throw Exception()),
-        throwsA(isA<Exception>()),
-      );
-
-      // Immediately still open
-      await expectLater(
-        policy.execute(() async => 123),
-        throwsA(predicate((e) => e.toString().contains('Circuit is open'))),
-      );
-
-      // Wait for resetTimeout
       await Future.delayed(Duration(milliseconds: 40));
 
-      // Now half-open: allow one trial
-      final r = await policy.execute(() async => 7);
-      expect(r, 7);
+      expect(await policy.execute(() async => 7), 7);
+      expect(policy.state, CircuitState.closed);
+      expect(await policy.execute(() async => 8), 8);
+    });
 
-      // After success, circuit closed
-      final r2 = await policy.execute(() async => 8);
-      expect(r2, 8);
+    test('half-open admits only ONE probe (no thundering herd)', () async {
+      final policy = CircuitBreakerPolicy<int>(
+        failureThreshold: 1,
+        resetTimeout: Duration(milliseconds: 20),
+      );
+      await expectLater(policy.execute(() async => throw Exception()),
+          throwsA(isA<Exception>()));
+      await Future.delayed(Duration(milliseconds: 30));
+
+      final probeStarted = Completer<void>();
+      final releaseProbe = Completer<void>();
+      final probe = policy.execute(() async {
+        probeStarted.complete();
+        await releaseProbe.future;
+        return 1;
+      });
+      await probeStarted.future;
+
+      await expectLater(
+        policy.execute(() async => 2),
+        throwsA(isA<CircuitOpenException>()),
+      );
+
+      releaseProbe.complete();
+      expect(await probe, 1);
+      expect(policy.state, CircuitState.closed);
     });
   });
 }

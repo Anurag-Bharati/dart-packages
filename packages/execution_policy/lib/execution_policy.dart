@@ -40,6 +40,7 @@
 /// ```
 library;
 
+export 'src/cancellation_token.dart'; // CancellationToken for aborting in-flight retries/backoff
 export 'src/interface.dart'; // Core Policy<T> interface and FutureFunction typedef
 export 'src/policies/_wrapper.dart'; // Built-in policy implementations: RetryPolicy, TimeoutPolicy, FallbackPolicy, CircuitBreakerPolicy
 export 'src/policy_builder.dart'; // Fluent PolicyBuilder for composing and executing policies

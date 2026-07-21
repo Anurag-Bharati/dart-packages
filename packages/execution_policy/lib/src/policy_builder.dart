@@ -2,16 +2,25 @@ import 'dart:async';
 
 import 'package:execution_policy/execution_policy.dart';
 
-/// Builds and composes multiple [Policy] instances into a single execution pipeline.
+/// Builds and composes multiple [Policy] instances into a single execution
+/// pipeline.
 ///
-/// A fluent builder for composing resilience and transient-fault-handling policies.
-///
-/// Policies are automatically ordered by their `order` property (ascending) so
-/// you don’t need to worry about wrap order:
+/// Policies are ordered by their `order` property (ascending), so the wrap order
+/// is fixed regardless of the order you add them in:
 ///  1. FallbackPolicy (outermost)
 ///  2. CircuitBreakerPolicy
 ///  3. RetryPolicy
 ///  4. TimeoutPolicy (innermost)
+///
+/// Two consequences follow from this fixed order, and they are intentional:
+///  - the timeout is applied **per attempt** (each retry gets a fresh deadline),
+///    not to the whole execution; and
+///  - the breaker sits **outside** retry, so one `execute` may record up to
+///    `maxAttempts` failures against the breaker.
+///
+/// A builder may hold at most one policy of each type; adding a second throws.
+/// Because [CircuitBreakerPolicy] and a [CancellationToken] carry state, reuse
+/// the SAME builder across calls for a given endpoint rather than rebuilding it.
 ///
 /// ## Usage
 ///
@@ -20,96 +29,89 @@ import 'package:execution_policy/execution_policy.dart';
 ///   .retry(
 ///     RetryOptions.exponentialJitter.copyWith(maxAttempts: 4),
 ///     retryIf: (e) => e is HttpException,
-///     onError: (e, stack, attempt) async {
-///       log('Attempt $attempt failed: $e');
-///     },
 ///   )
 ///   .timeout(Duration(seconds: 2))
-///   .fallback(() async => 'default')
+///   .circuitBreaker(failureThreshold: 3, resetTimeout: Duration(seconds: 10))
+///   .fallback((error) async => 'default')
 ///   .execute(() async => fetchData());
-/// ```
-///
-/// For per-policy tracing, use `debugExecute`:
-/// ```dart
-/// await PolicyBuilder<String>()
-///   .retry(RetryOptions.fixed)
-///   .timeout(Duration(seconds: 1))
-///   .debugExecute(
-///     () async => unreliableOperation(),
-///     (msg) => print('[DEBUG] $msg'),
-///   );
 /// ```
 class PolicyBuilder<T> {
   final List<Policy<T>> _policies = [];
 
   /// Adds a [RetryPolicy] configured by [options].
   ///
-  /// - [retryIf]: called on each caught error (before retry). Return `true` to retry.
-  /// - [onError]: called after each failed attempt, with the error, optional stack, and 1-based attempt count.
+  /// - [retryIf]: called on each caught error; return `true` to retry.
+  /// - [shouldContinue]: cheap gate checked before each backoff; return `false`
+  ///   (e.g. the caller went away) to stop retrying.
+  /// - [cancelToken]: hard-aborts further attempts and interrupts a sleeping
+  ///   backoff.
+  /// - [onError]: awaited defensively after each failed attempt.
+  /// - [onRetry]: synchronous observability hook before each backoff.
   PolicyBuilder<T> retry(
     RetryOptions options, {
     bool Function(Object error)? retryIf,
-    FutureOr<void> Function(Object error, StackTrace? stack, int attempt)? onError,
+    bool Function()? shouldContinue,
+    CancellationToken? cancelToken,
+    FutureOr<void> Function(Object error, StackTrace? stack, int attempt)?
+        onError,
+    OnRetry? onRetry,
   }) {
-    _policies.add(RetryPolicy<T>(options: options, retryIf: retryIf, onError: onError));
-    return this;
+    return _add(RetryPolicy<T>(
+      options: options,
+      retryIf: retryIf,
+      shouldContinue: shouldContinue,
+      cancelToken: cancelToken,
+      onError: onError,
+      onRetry: onRetry,
+    ));
   }
 
-  /// Adds a [TimeoutPolicy] that aborts the action if it exceeds [duration].
+  /// Adds a [TimeoutPolicy] that fails the action if it exceeds [duration].
   PolicyBuilder<T> timeout(Duration duration) {
-    _policies.add(TimeoutPolicy<T>(duration));
-    return this;
+    return _add(TimeoutPolicy<T>(duration));
   }
 
-  /// Adds a [FallbackPolicy] that returns [fallbackFn] if an earlier policy rethrows.
-  PolicyBuilder<T> fallback(FutureFunction<T> fallbackFn) {
-    _policies.add(FallbackPolicy<T>(fallback: fallbackFn));
-    return this;
+  /// Adds a [FallbackPolicy] that returns [fallbackFn]'s value if an inner
+  /// policy throws a handled [Exception]. [shouldHandle] narrows which errors
+  /// fall back (default: all exceptions; [Error]s always propagate).
+  PolicyBuilder<T> fallback(
+    FallbackFunction<T> fallbackFn, {
+    bool Function(Object error)? shouldHandle,
+  }) {
+    return _add(
+        FallbackPolicy<T>(fallback: fallbackFn, shouldHandle: shouldHandle));
   }
 
-  /// Adds a [CircuitBreakerPolicy]:
-  /// - `failureThreshold`: how many failures to open the circuit.
-  /// - `resetTimeout`: how long to wait before allowing a half-open trial.
+  /// Adds a [CircuitBreakerPolicy].
+  /// - [failureThreshold]: consecutive failures before opening.
+  /// - [resetTimeout]: how long to wait before a half-open trial.
+  /// - [onStateChange]: notified on every state transition.
   PolicyBuilder<T> circuitBreaker({
     int failureThreshold = 3,
     Duration resetTimeout = const Duration(seconds: 60),
+    void Function(CircuitState from, CircuitState to)? onStateChange,
   }) {
-    _policies.add(CircuitBreakerPolicy<T>(
+    return _add(CircuitBreakerPolicy<T>(
       failureThreshold: failureThreshold,
       resetTimeout: resetTimeout,
+      onStateChange: onStateChange,
     ));
-    return this;
   }
 
   /// Executes the composed pipeline on [action].
-  ///
-  /// Policies are sorted by `order` and wrapped so that the outermost policy
-  /// runs first and the innermost last.
-  Future<T> execute(FutureFunction<T> action) async {
-    final ordered = List<Policy<T>>.from(_policies)..sort((a, b) => a.order.compareTo(b.order));
-    FutureFunction<T> current = action;
-    for (final policy in ordered.reversed) {
-      final prev = current;
-      current = () => policy.execute(prev);
-    }
-    return current();
+  Future<T> execute(FutureFunction<T> action) {
+    return _wrap(action, (policy, next) => () => policy.execute(next))();
   }
 
-  /// Executes the pipeline with debug instrumentation.
-  ///
-  /// Wraps each policy in a [PolicyDebugger], which logs “Starting”, “✓ Succeeded”
-  /// and “✗ Failed” (with durations) to [logger].
+  /// Executes the pipeline with per-policy debug instrumentation into [logger].
   Future<T> debugExecute(
     FutureFunction<T> action,
     void Function(String message) logger,
   ) {
-    final ordered = List<Policy<T>>.from(_policies)..sort((a, b) => a.order.compareTo(b.order));
-    FutureFunction<T> current = action;
-    for (final policy in ordered.reversed) {
-      final prev = current;
-      current = () => PolicyDebugger<T>(policy, logger).execute(prev);
-    }
-    return current();
+    return _wrap(
+      action,
+      (policy, next) => () => PolicyDebugger<T>(policy, logger).execute(next),
+    )();
   }
 
   /// Clears all added policies, allowing reuse of the builder.
@@ -118,10 +120,35 @@ class PolicyBuilder<T> {
     return this;
   }
 
-  /// Returns a new PolicyBuilder with the same policies.
+  /// Returns a new builder with the same policy instances.
+  ///
+  /// The policy list is copied but its entries are shared, so a stateful
+  /// [CircuitBreakerPolicy] is shared between the original and the copy.
   PolicyBuilder<T> copy() {
-    final newBuilder = PolicyBuilder<T>();
-    newBuilder._policies.addAll(_policies);
-    return newBuilder;
+    return PolicyBuilder<T>().._policies.addAll(_policies);
+  }
+
+  PolicyBuilder<T> _add(Policy<T> policy) {
+    if (_policies.any((p) => p.runtimeType == policy.runtimeType)) {
+      throw StateError(
+          '${policy.runtimeType} already added to this PolicyBuilder');
+    }
+    _policies.add(policy);
+    return this;
+  }
+
+  /// Folds the sorted policies (outermost first) around [action].
+  FutureFunction<T> _wrap(
+    FutureFunction<T> action,
+    FutureFunction<T> Function(Policy<T> policy, FutureFunction<T> next) step,
+  ) {
+    final ordered = List<Policy<T>>.from(_policies)
+      ..sort((a, b) => a.order.compareTo(b.order));
+    var current = action;
+    for (final policy in ordered.reversed) {
+      final next = current;
+      current = step(policy, next);
+    }
+    return current;
   }
 }
