@@ -211,7 +211,7 @@ final class MonoTimeImpl {
       }
     }
 
-    await _performSync();
+    unawaited(_performSync());
     if (_config.backgroundSyncInterval != null) {
       await enableBackgroundSync(_config.backgroundSyncInterval!);
     }

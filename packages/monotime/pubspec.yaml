@@ -3,7 +3,7 @@ description: >
   Tamper-resistant network time for Flutter. Anchors NTP + HTTPS-authenticated
   consensus to the hardware monotonic clock. No Rust, no NTS-KE complexity —
   just reliable, manipulation-proof time for mobile apps.
-version: 0.1.0
+version: 0.1.1
 homepage: https://github.com/Anurag-Bharati/dart-packages/tree/main/packages/monotime
 repository: https://github.com/Anurag-Bharati/dart-packages
 issue_tracker: https://github.com/Anurag-Bharati/dart-packages/issues
